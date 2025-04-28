@@ -18,12 +18,12 @@ cd knockdock
 go build -o knockdock main.go
 
 # Option 1: Make executable in current directory
-1. sudo chmod +x knockdock
+sudo chmod +x knockdock
 
 # OR
 
 # Option 2: Install system-wide
-2. sudo mv knockdock /usr/local/bin/ && sudo chmod +x /usr/local/bin/knockdock
+sudo mv knockdock /usr/local/bin/ && sudo chmod +x /usr/local/bin/knockdock
 ```
 
 ## Usage
