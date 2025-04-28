@@ -715,14 +715,26 @@ func purge() error {
 		}
 	}
 
-	// Ask about uninstalling cloudflared
-	fmt.Printf("%sRemoving cloudflared...%s\n", colorYellow, colorReset)
-	cmd := exec.Command("sudo", "rm", "-f", "/usr/local/bin/cloudflared")
-	if err := cmd.Run(); err != nil {
-		fmt.Printf("%sWarning: Failed to remove cloudflared: %v%s\n", colorYellow, err, colorReset)
-	} else {
-		fmt.Printf("%sCloudflared removed%s\n", colorGreen, colorReset)
+	// Ask user whether to remove cloudflared
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Print("Do you want to remove the cloudflared binary? [y/N]: ")
+	answer, err := reader.ReadString('\n')
+	if err != nil {
+		return err
 	}
+	answer = strings.TrimSpace(strings.ToLower(answer))
+	if answer == "y" || answer == "yes" {
+		fmt.Printf("%sRemoving cloudflared...%s\n", colorYellow, colorReset)
+		cmd := exec.Command("sudo", "rm", "-f", "/usr/local/bin/cloudflared")
+		if err := cmd.Run(); err != nil {
+			fmt.Printf("%sWarning: Failed to remove cloudflared: %v%s\n", colorYellow, err, colorReset)
+		} else {
+			fmt.Printf("%sCloudflared removed%s\n", colorGreen, colorReset)
+		}
+	} else {
+		fmt.Printf("%sSkipping cloudflared removal%s\n", colorGreen, colorReset)
+	}
+
 	fmt.Printf("%sPurge completed successfully%s\n", colorGreen, colorReset)
 	return nil
 }
