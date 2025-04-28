@@ -92,4 +92,4 @@ Options:
 
 - Linux OS (Ubuntu, Debian, Arch, Astra Linux, etc.)
 - SSH server installed
-- `curl`, `bash`, and basic system tools
+- `cloudflared`, `curl`, `bash`, and basic system tools
