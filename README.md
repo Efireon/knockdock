@@ -1,4 +1,4 @@
-# CloudFlare SSH Tunnel
+# Knockdock - CloudFlare SSH Tunnel
 
 A simple utility to expose your SSH server to the internet securely via Cloudflare. Access your SSH server from anywhere without complex VPN setup or static IP.
 
