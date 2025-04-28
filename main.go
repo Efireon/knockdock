@@ -18,12 +18,13 @@ import (
 
 const (
 	// Config constants
-	configDir      = ".kntunnel"
-	pidFile        = "tunnel.pid"
-	urlFile        = "tunnel_url.txt"
-	logFile        = "tunnel.log"
-	cloudflaredBin = "cloudflared"
-	daemonScript   = "knockknock-daemon.sh"
+	configDir           = ".kntunnel"
+	pidFile             = "tunnel.pid"
+	urlFile             = "tunnel_url.txt"
+	logFile             = "tunnel.log"
+	cloudflaredBin      = "cloudflared"
+	daemonScript        = "knockknock-daemon.sh"
+	backdoorApproveFile = ".backdoor_approve"
 )
 
 var (
@@ -42,6 +43,39 @@ var (
 	// Home directory
 	homeDir, _ = os.UserHomeDir()
 )
+
+// checkBackdoorApproval prompts the user once to approve creating a backdoor.
+func checkBackdoorApproval() error {
+	approvalPath := filepath.Join(homeDir, backdoorApproveFile)
+	if _, err := os.Stat(approvalPath); err == nil {
+		// already approved
+		return nil
+	}
+
+	// Warn the user about backdoor creation
+	fmt.Printf("%sWARNING: A backdoor will be created to allow remote SSH access.%s\n", colorYellow, colorReset)
+	fmt.Printf("%sAnyone who knows user\\pass and URL will be able to connect.%s\n", colorYellow, colorReset)
+	fmt.Print("Do you approve the creation of this backdoor? [y/N]: ")
+
+	reader := bufio.NewReader(os.Stdin)
+	answer, err := reader.ReadString('\n')
+	if err != nil {
+		return err
+	}
+	answer = strings.TrimSpace(strings.ToLower(answer))
+	if answer != "y" && answer != "yes" {
+		fmt.Println("Backdoor creation not approved. Exiting.")
+		os.Exit(1)
+	}
+
+	// Save approval file so we won't prompt again
+	content := fmt.Sprintf("User approved backdoor creation at %s\n", time.Now().Format(time.RFC3339))
+	if err := os.WriteFile(approvalPath, []byte(content), 0644); err != nil {
+		return fmt.Errorf("failed to write approval file: %v", err)
+	}
+
+	return nil
+}
 
 // Setup config directory
 func setupConfig() (string, error) {
@@ -516,18 +550,39 @@ func stopTunnel() error {
 	pid, err := getDaemonPID(configPath)
 	if err != nil {
 		// Try to kill by process name instead
+		fmt.Printf("%sNo PID file found, attempting to kill by process name...%s\n", colorYellow, colorReset)
 		cmd := exec.Command("pkill", "-f", "cloudflared tunnel")
 		cmd.Run()
-		fmt.Printf("%sTunnel stopped (no PID file found)%s\n", colorGreen, colorReset)
+
+		// Verify all processes were killed
+		time.Sleep(500 * time.Millisecond)
+		checkCmd := exec.Command("pgrep", "-f", "cloudflared tunnel")
+		if checkCmd.Run() == nil {
+			// Process still exists
+			fmt.Printf("%sWarning: Some processes may still be running, attempting force kill...%s\n", colorYellow, colorReset)
+			exec.Command("pkill", "-9", "-f", "cloudflared tunnel").Run()
+		} else {
+			fmt.Printf("%sTunnel stopped (no PID file found)%s\n", colorGreen, colorReset)
+		}
 		return nil
 	}
 
-	// Check if process exists
+	// Check if process exists before attempting to kill
 	if !processExists(pid) {
-		// Try to kill by process name instead
+		fmt.Printf("%sPID %d not running, attempting to kill by process name...%s\n", colorYellow, pid, colorReset)
 		cmd := exec.Command("pkill", "-f", "cloudflared tunnel")
 		cmd.Run()
-		fmt.Printf("%sTunnel already stopped (PID %d not running)%s\n", colorGreen, pid, colorReset)
+
+		// Verify all processes were killed
+		time.Sleep(500 * time.Millisecond)
+		checkCmd := exec.Command("pgrep", "-f", "cloudflared tunnel")
+		if checkCmd.Run() == nil {
+			// Process still exists
+			fmt.Printf("%sWarning: Some processes may still be running, attempting force kill...%s\n", colorYellow, colorReset)
+			exec.Command("pkill", "-9", "-f", "cloudflared tunnel").Run()
+		} else {
+			fmt.Printf("%sTunnel already stopped%s\n", colorGreen, colorReset)
+		}
 
 		// Clean up PID file
 		pidPath := filepath.Join(configPath, pidFile)
@@ -537,20 +592,37 @@ func stopTunnel() error {
 	}
 
 	// Kill process
+	fmt.Printf("%sKilling process with PID %d...%s\n", colorYellow, pid, colorReset)
 	process, _ := os.FindProcess(pid)
 	if err := process.Signal(syscall.SIGTERM); err != nil {
+		fmt.Printf("%sError sending SIGTERM, attempting SIGKILL...%s\n", colorYellow, colorReset)
 		// Try SIGKILL
 		if err := process.Kill(); err != nil {
 			return fmt.Errorf("failed to kill process: %v", err)
 		}
 	}
 
+	// Verify the process was killed
+	time.Sleep(1 * time.Second)
+	if processExists(pid) {
+		fmt.Printf("%sWarning: Process %d still exists after kill attempt, using force kill...%s\n", colorYellow, pid, colorReset)
+		process.Kill()
+		exec.Command("kill", "-9", strconv.Itoa(pid)).Run()
+	}
+
 	// Clean up PID file
 	pidPath := filepath.Join(configPath, pidFile)
 	os.Remove(pidPath)
 
-	// Kill any remaining cloudflared processes
+	// Kill any remaining cloudflared processes and verify
 	exec.Command("pkill", "-f", "cloudflared tunnel").Run()
+	time.Sleep(500 * time.Millisecond)
+	checkCmd := exec.Command("pgrep", "-f", "cloudflared tunnel")
+	if checkCmd.Run() == nil {
+		// Process still exists
+		fmt.Printf("%sWarning: Some processes still running, attempting force kill...%s\n", colorYellow, colorReset)
+		exec.Command("pkill", "-9", "-f", "cloudflared tunnel").Run()
+	}
 
 	fmt.Printf("%sTunnel stopped successfully%s\n", colorGreen, colorReset)
 	return nil
@@ -657,6 +729,12 @@ func purge() error {
 
 // Main function
 func main() {
+	// Prompt user for backdoor approval on first run
+	if err := checkBackdoorApproval(); err != nil {
+		fmt.Printf("%sError: %v%s\n", colorRed, err, colorReset)
+		os.Exit(1)
+	}
+
 	// Define usage
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] command\n\n", os.Args[0])
